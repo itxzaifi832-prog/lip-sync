@@ -1,0 +1,244 @@
+I need you to help me build a lip-sync web application with the following structure:
+Project Structure
+
+Backend folder: Already initialized with Poetry for dependency management
+Frontend folder: Already setup with Vite + React
+
+Application Overview
+Create a web application that takes a text sentence and a face image as input, then generates a lip-synced video where the face appears to speak the text.
+Technology Stack & Requirements
+Backend (Python + FastAPI)
+
+Framework: FastAPI with uvicorn
+Core Libraries (ensure compatibility):
+
+fastapi (latest stable)
+uvicorn[standard] (latest stable)
+python-multipart (for file uploads)
+lipsync (Wav2Lip wrapper - use version compatible with current Python)
+pyttsx3 (offline TTS) OR gTTS (online TTS with better quality - let me choose)
+pillow (image processing)
+torch (CPU version only - use --index-url https://download.pytorch.org/whl/cpu for installation)
+opencv-python (video processing)
+numpy
+
+
+Important: When adding dependencies via Poetry, ensure all versions are compatible with Python 3.9+ and work together. Explicitly check for CPU-only torch installation.
+
+Frontend (React + Vite)
+
+UI Libraries:
+
+Basic React with hooks
+Axios for API calls
+Simple CSS or Tailwind CSS for styling
+
+
+Features needed:
+
+Text input field for the sentence
+Image upload component (accept .jpg, .png)
+Submit button
+Loading indicator with progress status
+Video player to display the result
+Download button for the generated video
+
+
+
+Backend Implementation Requirements
+API Endpoints
+Create the following RESTful endpoints:
+
+POST /api/generate-lipsync
+
+Accepts: text (string), image (file upload)
+Returns: Generated video file or video URL
+Response should include status and error handling
+
+
+GET /api/health
+
+Simple health check endpoint
+Returns: {"status": "healthy"}
+
+
+
+Processing Pipeline
+Implement this workflow:
+Step 1: Text-to-Speech Conversion
+
+Take the input text
+Use pyttsx3 (or gTTS based on my choice) to convert text to audio
+Save audio as WAV file in a temporary directory
+Audio should be clear and properly formatted for Wav2Lip
+
+Step 2: Face Image Processing
+
+Validate the uploaded image (check format, size)
+Ensure the image contains a detectable face
+Preprocess if needed (resize, format conversion)
+
+Step 3: Lip-Sync Generation
+
+Use the lipsync library (Wav2Lip wrapper)
+Input: face image + generated audio
+Output: MP4 video file with lip-synced result
+Enable caching for the same image if possible
+
+Step 4: Response
+
+Return the generated video file
+Clean up temporary files after response
+
+Code Organization
+Structure the backend as follows:
+backend/
+├── main.py (FastAPI app initialization)
+├── api/
+│   └── routes.py (API endpoint definitions)
+├── services/
+│   ├── tts_service.py (text-to-speech logic)
+│   └── lipsync_service.py (lip-sync generation logic)
+├── utils/
+│   ├── file_handler.py (file operations, temp file management)
+│   └── validators.py (input validation)
+├── models/ (downloaded model checkpoints - .gitignore this)
+└── temp/ (temporary files - .gitignore this)
+Important Backend Considerations
+
+Error Handling: Wrap all operations in try-except blocks with meaningful error messages
+File Management:
+
+Create temp directories if they don't exist
+Clean up temporary audio/video files after processing
+Add proper logging for debugging
+
+
+CORS: Enable CORS to allow frontend requests
+Model Downloads: On first run, download required Wav2Lip models (face detection, checkpoint)
+Async Operations: Use async/await where appropriate for FastAPI
+Progress Tracking: If possible, add WebSocket or polling endpoint for progress updates
+
+Model Setup Instructions
+
+Download wav2lip.pth checkpoint (or wav2lip_gan.pth for better quality)
+Download s3fd.pth face detection model
+Store in backend/models/ directory
+Provide clear instructions in README on where to download these
+
+Frontend Implementation Requirements
+Component Structure
+frontend/src/
+├── App.jsx (main app component)
+├── components/
+│   ├── UploadForm.jsx (text input + image upload)
+│   ├── VideoPlayer.jsx (display result)
+│   └── LoadingSpinner.jsx (progress indicator)
+├── services/
+│   └── api.js (axios API calls)
+└── styles/
+    └── App.css (or use Tailwind)
+UI/UX Requirements
+
+Upload Form:
+
+Text input with placeholder "Enter text to speak..."
+Image upload with drag-and-drop support
+Preview of uploaded image
+Clear validation messages
+Submit button that disables during processing
+
+
+Processing State:
+
+Show loading spinner when processing
+Display status messages: "Generating audio...", "Creating lip-sync video..."
+Estimated time remaining if possible
+
+
+Result Display:
+
+Video player with controls (play, pause, volume)
+Download button for the generated video
+"Generate Another" button to reset the form
+
+
+Error Handling:
+
+Display user-friendly error messages
+Allow retry on failure
+
+
+
+API Integration
+
+Use axios to call backend endpoints
+Handle file uploads with FormData
+Implement proper error handling and loading states
+Add timeout configuration for long-running requests
+
+General Requirements
+Configuration
+
+Backend: Use environment variables for configuration (port, model paths, etc.)
+Frontend: Configure proxy in vite.config.js to point to backend during development
+Create .env.example files for both frontend and backend
+
+Documentation
+Provide README files for both frontend and backend with:
+
+Installation instructions (Poetry install for backend, npm install for frontend)
+How to download required models
+How to run the development servers
+API documentation
+Troubleshooting common issues
+
+Code Quality
+
+Write clean, well-commented code
+Use type hints in Python where appropriate
+Follow Python PEP 8 style guidelines
+Use ESLint-friendly React code
+Add error logging throughout
+
+Performance Optimization
+
+Since this is for a low-end laptop:
+
+Use CPU-only mode for all operations
+Keep video resolution reasonable (480p or 720p max)
+Limit input image size (resize if too large)
+Add file size limits (e.g., max 5MB for images)
+Process videos in chunks if needed
+
+
+
+Security Considerations
+
+Validate all file uploads (type, size)
+Sanitize text input
+Add rate limiting if deploying
+Use secure file paths (no path traversal vulnerabilities)
+
+Deliverables
+
+Fully functional backend with all endpoints
+Fully functional frontend with all UI components
+README files with setup and usage instructions
+requirements.txt or pyproject.toml properly configured
+.gitignore files for both frontend and backend
+Clear instructions for downloading model checkpoints
+
+Testing Checklist
+Before considering it complete, ensure:
+
+ Text-to-speech generates clear audio
+ Face detection works on various images
+ Lip-sync video is generated successfully
+ Frontend properly uploads and displays results
+ Error handling works for invalid inputs
+ Temporary files are cleaned up properly
+ Can run on CPU-only machine
+ CORS is properly configured
+
+Start with the backend implementation first, then move to frontend. Ensure each component works independently before integrating.
