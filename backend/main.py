@@ -1,8 +1,14 @@
+import sys
+import torchvision.transforms.functional as F
+# Monkeypatch for basicsr compatibility with newer torchvision
+sys.modules['torchvision.transforms.functional_tensor'] = F
+
+import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api import routes
 from utils.file_handler import init_temp_dir, cleanup_temp_dir
-import os
 
 app = FastAPI(title="Lip-Sync Generator API")
 

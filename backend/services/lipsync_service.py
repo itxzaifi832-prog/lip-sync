@@ -9,14 +9,16 @@ from utils.file_handler import get_temp_file_path
 from wav2lip.models import Wav2Lip
 from wav2lip import audio as wav2lip_audio
 
-# OpenCV DNN imports (standard cv2)
-# No extra imports needed
+
+# GFPGAN import
+from gfpgan import GFPGANer
 
 class LipSyncService:
     device = 'cpu'  # Force CPU-only
     model = None
     model_path = None
     face_detector = None
+    restorer = None
     mel_step_size = 16
     img_size = 96
     
@@ -70,6 +72,30 @@ class LipSyncService:
             cls.face_detector = cv2.dnn.readNetFromCaffe(str(prototxt), str(model))
         
         return cls.face_detector
+
+    @classmethod
+    def _load_restorer(cls):
+        """Load GFPGAN Restorer"""
+        if cls.restorer is None:
+            model_path = Path("models/GFPGANv1.4.pth")
+            if not model_path.exists():
+                raise FileNotFoundError(
+                    "GFPGAN model not found. Please ensure 'GFPGANv1.4.pth' is in backend/models/"
+                )
+            
+            print("Loading GFPGAN Restorer...")
+            # Initialize the restorer
+            # upsclae=1 means we don't upscale the whole image, we just restore the face
+            # bg_upsampler=None to keep it faster on CPU
+            cls.restorer = GFPGANer(
+                model_path=str(model_path),
+                upscale=1,
+                arch='clean',
+                channel_multiplier=2,
+                bg_upsampler=None,
+                device=cls.device
+            )
+        return cls.restorer
 
     @staticmethod
     def _get_smoothened_boxes(boxes, T=5):
@@ -253,8 +279,9 @@ class LipSyncService:
         """Run the Wav2Lip inference (synchronous)"""
         print("Starting Wav2Lip inference...")
         
-        # Load model
+        # Load models
         model = cls._load_model(model_checkpoint)
+        restorer = cls._load_restorer() # Load GFPGAN
         
         # Load audio and convert to mel spectrogram
         print("Processing audio...")
@@ -310,8 +337,33 @@ class LipSyncService:
             for p, f, c in zip(pred, frame_batch, coords_batch):
                 y1, y2, x1, x2 = c
                 
-                # Resize the predicted 96x96 face back to the original face slot size
-                p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+                # p is the 96x96 face prediction from Wav2Lip
+                p = p.astype(np.uint8)
+                
+                # --- GFPGAN Restoration ---
+                # Enhance the face using GFPGAN
+                # restorer.enhance takes the cropped face
+                # returns: cropped_face, restored_face, restored_img
+                # We only need restored_face
+                try:
+                    # restored_faces is a LIST of detected faces in the image.
+                    # Since we are passing a single face crop, we take the first one.
+                    _, restored_faces, _ = restorer.enhance(
+                        p, 
+                        has_aligned=False, 
+                        only_center_face=False, 
+                        paste_back=False
+                    )
+                    
+                    if restored_faces is not None and len(restored_faces) > 0:
+                        p = restored_faces[0]
+                except Exception as e:
+                    print(f"GFPGAN restoration failed for a frame: {e}")
+                
+                # --- End GFPGAN ---
+                
+                # Resize the (now restored) face back to the original face slot size
+                p = cv2.resize(p, (x2 - x1, y2 - y1), interpolation=cv2.INTER_LANCZOS4)
                 
                 # Paste the lip-synced face back onto the full frame
                 f[y1:y2, x1:x2] = p
