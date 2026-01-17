@@ -9,10 +9,14 @@ from utils.file_handler import get_temp_file_path
 from wav2lip.models import Wav2Lip
 from wav2lip import audio as wav2lip_audio
 
+# OpenCV DNN imports (standard cv2)
+# No extra imports needed
+
 class LipSyncService:
     device = 'cpu'  # Force CPU-only
     model = None
     model_path = None
+    face_detector = None
     mel_step_size = 16
     img_size = 96
     
@@ -33,7 +37,6 @@ class LipSyncService:
             if isinstance(checkpoint, dict):
                 s = checkpoint.get("state_dict", checkpoint)
             else:
-                # If it's a ScriptModule or similar, try to get state_dict()
                 s = checkpoint.state_dict()
 
             new_s = {}
@@ -48,6 +51,26 @@ class LipSyncService:
         
         return cls.model
     
+    @classmethod
+    def _load_face_detector(cls):
+        """Load OpenCV DNN Face Detector"""
+        if cls.face_detector is None:
+            model_dir = Path("models")
+            prototxt = model_dir / "deploy.prototxt"
+            model = model_dir / "res10_300x300_ssd_iter_140000.caffemodel"
+            
+            if not prototxt.exists() or not model.exists():
+                raise FileNotFoundError(
+                    "OpenCV Face Detection models not found. "
+                    "Please ensure 'deploy.prototxt' and 'res10_300x300_ssd_iter_140000.caffemodel' "
+                    "are in the backend/models directory."
+                )
+            
+            print("Loading OpenCV DNN Face Detector...")
+            cls.face_detector = cv2.dnn.readNetFromCaffe(str(prototxt), str(model))
+        
+        return cls.face_detector
+
     @staticmethod
     def _get_smoothened_boxes(boxes, T=5):
         """Smooth face detection boxes over time"""
@@ -59,24 +82,72 @@ class LipSyncService:
             boxes[i] = np.mean(window, axis=0)
         return boxes
     
-    @staticmethod
-    def _face_detect(image_path: Path, pads=[0, 10, 0, 0]):
-        """Detect face in the image and return cropped face region"""
-        # For a single image, we'll use a simple face detection or just use the whole image
-        # Simplified version: use the full image with padding
+    @classmethod
+    def _face_detect(cls, image_path: Path):
+        """
+        Detect face using OpenCV DNN and return cropped face region and coordinates.
+        Returns: (full_image, (y1, y2, x1, x2))
+        """
         img = cv2.imread(str(image_path))
-        
-        # For single image inference, we'll use a simple center crop approach
-        # In production, you should use face_alignment library for proper face detection
+        if img is None:
+            raise ValueError(f"Could not open image: {image_path}")
+            
         h, w = img.shape[:2]
         
-        # Simple center crop (assumes face is centered)
-        # You can enhance this with actual face detection using face_alignment
-        pady1, pady2, padx1, padx2 = pads
+        # Load detector
+        net = cls._load_face_detector()
         
-        # Use the full image for now (simplified)
-        y1, y2 = 0, h
-        x1, x2 = 0, w
+        # Predict
+        blob = cv2.dnn.blobFromImage(cv2.resize(img, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+        net.setInput(blob)
+        detections = net.forward()
+        
+        # Iterate over detections to find the best face
+        best_box = None
+        max_conf = 0
+        
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            
+            if confidence > 0.5:
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                (startX, startY, endX, endY) = box.astype("int")
+                
+                if confidence > max_conf:
+                    max_conf = confidence
+                    best_box = (startX, startY, endX, endY)
+        
+        if best_box is None:
+            print("No face detected by OpenCV DNN! Processing entire image.")
+            return img, (0, h, 0, w)
+            
+        x1, y1, x2, y2 = best_box
+        w_face = x2 - x1
+        h_face = y2 - y1
+        
+        # Expansion logic (same as before)
+        # 1. find center
+        cx = x1 + w_face // 2
+        cy = y1 + h_face // 2
+        
+        # 2. determine larger side
+        max_side = max(w_face, h_face)
+        
+        # 3. Apply expansion factor
+        scale = 1.3
+        new_side = int(max_side * scale)
+        
+        # 4. recalculate coords
+        x1 = cx - new_side // 2
+        x2 = cx + new_side // 2
+        y1 = cy - new_side // 2
+        y2 = cy + new_side // 2
+        
+        # 5. Handle boundaries
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(w, x2)
+        y2 = min(h, y2)
         
         return img, (y1, y2, x1, x2)
     
@@ -92,11 +163,28 @@ class LipSyncService:
         img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
         
         # For static image (single frame)
-        face, coords = frames[0]
+        full_frame, coords = frames[0]
+        y1, y2, x1, x2 = coords
+        
+        # Crop the face for processing
+        # Need to ensure coordinates are valid slices
+        face = full_frame[y1:y2, x1:x2]
+        
+        if face.size == 0:
+             # Fallback if crop failed
+             face = full_frame
+             coords = (0, full_frame.shape[0], 0, full_frame.shape[1])
         
         for i, m in enumerate(mels):
-            frame_to_save = face.copy()
-            face_resized = cv2.resize(face, (img_size, img_size))
+            # We save the full frame to paste back onto later
+            frame_to_save = full_frame.copy()
+            
+            # Resize cropped face for model
+            try:
+                face_resized = cv2.resize(face, (img_size, img_size))
+            except Exception as e:
+                print(f"Resize failed: {e}. Using full frame.")
+                face_resized = cv2.resize(full_frame, (img_size, img_size))
             
             img_batch.append(face_resized)
             mel_batch.append(m)
@@ -106,7 +194,7 @@ class LipSyncService:
             if len(img_batch) >= batch_size:
                 img_batch_np, mel_batch_np = np.asarray(img_batch), np.asarray(mel_batch)
                 
-                # Mask the lower half
+                # Mask the lower half of the face input
                 img_masked = img_batch_np.copy()
                 img_masked[:, img_size//2:] = 0
                 
@@ -190,12 +278,14 @@ class LipSyncService:
         
         print(f"Number of mel chunks: {len(mel_chunks)}")
         
-        # Load and process image
-        print("Processing image...")
+        # Load and process image (High Res)
+        print("Processing image for face detection...")
         full_frame, coords = cls._face_detect(image_path)
+        
+        # frames is updated to hold (full_frame, coords)
         frames = [(full_frame, coords)]
         
-        # Prepare output video writer
+        # Prepare output video writer using ORIGINAL dimensions
         frame_h, frame_w = full_frame.shape[:-1]
         temp_video_path = get_temp_file_path(".avi")
         out = cv2.VideoWriter(str(temp_video_path), cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
@@ -207,18 +297,26 @@ class LipSyncService:
         gen = cls._datagen(frames, mel_chunks, cls.img_size, batch_size)
         
         for img_batch, mel_batch, frame_batch, coords_batch in gen:
+            # Move to device
             img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(cls.device)
             mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(cls.device)
             
             with torch.no_grad():
                 pred = model(mel_batch, img_batch)
             
+            # Convert prediction back to numpy
             pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
             
             for p, f, c in zip(pred, frame_batch, coords_batch):
                 y1, y2, x1, x2 = c
+                
+                # Resize the predicted 96x96 face back to the original face slot size
                 p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+                
+                # Paste the lip-synced face back onto the full frame
                 f[y1:y2, x1:x2] = p
+                
+                # Write the full resolution frame
                 out.write(f)
         
         out.release()
