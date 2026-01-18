@@ -1,9 +1,24 @@
+import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, Sparkles, Zap, Shield, Video } from 'lucide-react';
+import { ArrowRight, Sparkles, Zap, Shield, Play, Pause } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PageTransition from '../components/layout/Transition';
 
 const Dashboard = () => {
+    const [isPlaying, setIsPlaying] = useState(true);
+    const videoRef = useRef<HTMLVideoElement>(null);
+
+    const togglePlay = () => {
+        if (videoRef.current) {
+            if (isPlaying) {
+                videoRef.current.pause();
+            } else {
+                videoRef.current.play();
+            }
+            setIsPlaying(!isPlaying);
+        }
+    };
+
     return (
         <PageTransition>
             <div className="pt-24 pb-12 px-6 max-w-7xl mx-auto">
@@ -80,7 +95,7 @@ const Dashboard = () => {
 
                     <div className="relative z-10 grid md:grid-cols-2 gap-12 items-center">
                         <div>
-                            <h2 className="text-3xl font-bold mb-4">Why choose Antigravity?</h2>
+                            <h2 className="text-3xl font-bold mb-4">Why choose Lip-Sync?</h2>
                             <p className="text-zinc-400 mb-6">
                                 Our platform leverages the latest advancements in Wav2Lip and face restoration techniques to provide a seamless and high-fidelity experience. Whether it's for digital avatars, educational content, or memes, we've got you covered.
                             </p>
@@ -93,12 +108,33 @@ const Dashboard = () => {
                                 ))}
                             </ul>
                         </div>
-                        <div className="aspect-video glass rounded-2xl border-white/5 flex items-center justify-center">
-                            {/* Replace with a demo video or attractive image later */}
-                            <div className="text-zinc-500 flex flex-col items-center gap-2">
-                                <Video className="w-12 h-12 opacity-20" />
-                                <span>Demo Preview</span>
-                            </div>
+                        <div className="relative aspect-auto glass rounded-2xl border-white/5 overflow-hidden group max-h-[400px] flex items-center justify-center bg-black/40">
+                            <video
+                                ref={videoRef}
+                                src="/lipsync.mp4"
+                                autoPlay
+                                loop
+                                playsInline
+                                className="max-w-full max-h-[400px] h-auto w-auto"
+                                onClick={togglePlay}
+                            />
+
+                            <motion.div
+                                className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                onClick={togglePlay}
+                            >
+                                <motion.div
+                                    initial={false}
+                                    animate={{ scale: isPlaying ? 0.8 : 1 }}
+                                    className="w-16 h-16 rounded-full bg-primary/20 backdrop-blur-md flex items-center justify-center border border-white/10"
+                                >
+                                    {isPlaying ? (
+                                        <Pause className="w-8 h-8 text-white fill-white" />
+                                    ) : (
+                                        <Play className="w-8 h-8 text-white fill-white ml-1" />
+                                    )}
+                                </motion.div>
+                            </motion.div>
                         </div>
                     </div>
                 </div>
